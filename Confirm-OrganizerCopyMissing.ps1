@@ -93,6 +93,20 @@ function Write-Log {
     }
     Add-Content -Path $LogFile -Value $line
 }
+
+# Diagnostic trap: any unhandled terminating error prints its TYPE, the exact
+# script position, and the call stack -- so a bare ".NET" message can never again
+# leave us guessing which line failed.
+trap {
+    Write-Host ("FATAL {0}: {1}" -f $_.Exception.GetType().FullName, $_.Exception.Message) -ForegroundColor Red
+    Write-Host ("  at: {0}" -f $_.InvocationInfo.PositionMessage) -ForegroundColor Red
+    Write-Host ("  stack:`n{0}" -f $_.ScriptStackTrace) -ForegroundColor DarkRed
+    if ($LogFile) {
+        Add-Content -Path $LogFile -Value ("FATAL {0}: {1}`n{2}`n{3}" -f $_.Exception.GetType().FullName, $_.Exception.Message, $_.InvocationInfo.PositionMessage, $_.ScriptStackTrace)
+    }
+    break
+}
+
 Write-Log "Organizer-copy check started. Organizer=$TargetOrganizer Lookback=$LookbackDays Domain=$AttendeeDomain" 'STEP'
 
 # ---- Modules ---------------------------------------------------------------
@@ -173,6 +187,32 @@ function Get-OccurrenceKey {
     return "$ICalUId|$d"
 }
 
+# Some Microsoft.Graph.Authentication builds throw a CLIENT-SIDE ".NET Argument
+# types do not match" while binding a custom -Headers hashtable. The Prefer header
+# only asks Graph to render times in UTC; calendarView already returns UTC by
+# default, and ConvertTo-Utc copes with offset-bearing values, so if the header is
+# rejected we transparently retry WITHOUT it (once), then stop trying it.
+$script:GraphPreferHeaderOk = $true
+function Invoke-GraphGet {
+    param([Parameter(Mandatory)][string]$Uri, [hashtable]$Headers = @{})
+    if ($script:GraphPreferHeaderOk -and $Headers -and $Headers.Count -gt 0) {
+        try {
+            return Invoke-MgGraphRequest -Method GET -Uri $Uri -Headers $Headers -OutputType PSObject -ErrorAction Stop
+        } catch {
+            $em = $_.Exception.Message
+            # Only treat a local binding/type fault as "headers unsupported"; let real
+            # HTTP errors (401/403/404/throttling/etc.) propagate to the retry logic.
+            if ($em -match 'Argument types do not match|does not match|IDictionary|header') {
+                Write-Log ("  -Headers not accepted by this Graph module ({0}); retrying without the Prefer header (times still returned in UTC)." -f $em) 'WARN'
+                $script:GraphPreferHeaderOk = $false
+            } else {
+                throw
+            }
+        }
+    }
+    return Invoke-MgGraphRequest -Method GET -Uri $Uri -OutputType PSObject -ErrorAction Stop
+}
+
 # Paged Graph GET. Returns a result object so callers can tell a genuine empty
 # result apart from an access/permission failure (critical for the verdict).
 function Invoke-GraphPaged {
@@ -187,7 +227,7 @@ function Invoke-GraphPaged {
         $pageOk  = $false
         while ($true) {
             $attempt++
-            try { $resp = Invoke-MgGraphRequest -Method GET -Uri $next -Headers $Headers -OutputType PSObject -ErrorAction Stop; $pageOk = $true; break }
+            try { $resp = Invoke-GraphGet -Uri $next -Headers $Headers; $pageOk = $true; break }
             catch {
                 $msg = $_.Exception.Message
                 if ($msg -match 'Forbidden|Unauthorized|\b401\b|\b403\b|\b404\b|\b400\b|NotFound|denied') {
