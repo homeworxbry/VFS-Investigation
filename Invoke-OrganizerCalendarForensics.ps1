@@ -109,10 +109,11 @@ trap {
     break
 }
 
-# Count a collection by iterating, not via the PowerShell-extended .Count member,
-# which on this tenant's host throws "Argument types do not match" for certain
-# objects returned by Invoke-MgGraphRequest. Dictionaries expose a native .Count
-# that is unaffected. Robust for null/scalar/array/list inputs.
+# Count a collection by iterating instead of via @(...).Count. CONFIRMED on this
+# tenant's host (PowerShell 7.5 / .NET 9): @(<List[object]>).Count throws
+# "System.ArgumentException: Argument types do not match", even though
+# @(1,2,3).Count (an object[]) works. Invoke-MgGraphRequest returns List[object],
+# so iterate to count. Dictionaries use their native .Count, which is unaffected.
 function Get-Count {
     param($Collection)
     if ($null -eq $Collection) { return 0 }

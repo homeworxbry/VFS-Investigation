@@ -107,10 +107,12 @@ trap {
     break
 }
 
-# Count a collection WITHOUT touching the PowerShell-extended .Count member on
-# arrays/@() results. On this tenant's host that member throws "Argument types do
-# not match" (a loaded module clobbered the System.Array type data), so we count by
-# iterating instead. Dictionaries expose a native .Count that is unaffected.
+# Count a collection by iterating instead of via @(...).Count. CONFIRMED on this
+# tenant's host (PowerShell 7.5 / .NET 9): @(<List[object]>).Count throws
+# "System.ArgumentException: Argument types do not match", even though
+# @(1,2,3).Count (an object[]) works. Invoke-MgGraphRequest returns its results as
+# List[object], so every @($graphResult).Count tripped it. Iterating avoids the
+# faulting member entirely; dictionaries use their native .Count, which is fine.
 function Get-Count {
     param($Collection)
     if ($null -eq $Collection) { return 0 }
@@ -374,9 +376,6 @@ foreach ($e in $orgEvents) {
     $organizerSeries[$uid] = $true
     $organizerOccurrence[(Get-OccurrenceKey -ICalUId $uid -StartUtc (Get-EventStartUtc $e))] = $true
 }
-$orgEventsTypeName = '<null>'
-if ($null -ne $orgEvents) { try { $orgEventsTypeName = $orgEvents.GetType().FullName } catch { $orgEventsTypeName = '<GetType threw>' } }
-Write-Log "DEBUG: orgEvents .NET type = $orgEventsTypeName" 'INFO'
 $orgEventCount  = Get-Count $orgEvents
 $orgSeriesCount = Get-Count $organizerSeries
 Write-Log "  organizer calendar holds $orgEventCount events ($orgSeriesCount distinct series)." 'INFO'

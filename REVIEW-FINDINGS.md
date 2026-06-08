@@ -148,6 +148,45 @@ GOID group's representative start; a seed still present per Graph is labelled
 
 ---
 
+## B-bis. Runtime resolution of the `Argument types do not match` crash (CONFIRMED)
+
+The companion crashed at runtime even after the `Get-Prop` hardening. The diagnostic
+trap localised it precisely — **not** the Graph read, but the very next statement
+that counted the result. Root cause, confirmed via a type probe on the host:
+
+- The host runs **PowerShell 7.5 / .NET 9** (`System.Object, CoreLib, Version=9.0.0.0`).
+- `Invoke-MgGraphRequest` returns results as `System.Collections.Generic.List[object]`.
+- On this runtime, **`@(<List[object]>).Count` throws `System.ArgumentException: Argument
+  types do not match`**, even though `@(1,2,3).Count` (an `object[]`) works. The original
+  scripts and the first rewrites used `@($collection).Count` pervasively, so they died at
+  the first such call (a `Write-Log` line that reported the event count).
+
+**Fix:** a `Get-Count` helper that counts by **iteration** (`foreach`) — the same
+enumeration the surrounding loops already performed successfully — with a native
+`.Count` only for dictionaries. Every `@(...).Count` / array-var `.Count` in both
+scripts now routes through it. This is a true fix, not symptomatic.
+
+Also added in the course of debugging: a script-scope **diagnostic trap** (prints the
+exception type, exact line, and stack on any unhandled terminating error) and an
+**`Invoke-GraphGet`** wrapper that retries without the `Prefer` header if a build of
+`Microsoft.Graph.Authentication` rejects it.
+
+## B-ter. Companion run result (symptom CONFIRMED)
+
+First full run (lookback 90 days, 11 attendees, all read successfully → trustworthy):
+
+- **PRESENT_ON_ORGANIZER : 33**
+- **MISSING_FROM_ORGANIZER : 3** — meetings Matt organized, present on attendees'
+  calendars, entirely absent from his own (none flagged as a recurrence-occurrence
+  artifact, i.e. the whole `iCalUId` is missing from his calendar):
+  1. `Matt & Alan (Ventura Fund Services) / Joe and Brian (NSP Capital)` — 2026-03-23 18:30Z — alan.tsarovsky
+  2. `Strategy Session - Matt/Svetlana/Caroline` — 2026-05-20 19:30Z — svetlana.benjamin, caroline.cruz
+  3. `BDO/Ventura Fund Services - Lunch - Sen Sakana` — 2026-05-27 16:00Z — greg.shneynberg, eryn.darcy
+
+This is the definitive confirmation of the reported failure. Root-cause **client**
+(which app authored the drop) still requires the EXO diagnostic log once the §A/§5
+backend is restored.
+
 ## C. Still open / not addressed here (needs the tenant)
 
 1. **§5 backend blocker** — `Get-CalendarDiagnosticObjects` server-side failure is not a
