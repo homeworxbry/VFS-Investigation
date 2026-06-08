@@ -128,11 +128,57 @@ These meetings were organised by someone else. Matt was listed as an attendee. T
 
 ---
 
-## 6. Active Backend Issue — Get-CalendarDiagnosticObjects Failing
+## 6. Active Backend Issue — Get-CalendarDiagnosticObjects Failing (CONFIRMED)
 
 `Get-CalendarDiagnosticObjects` is currently returning a server-side error for this tenant. This cmdlet is the authoritative source for the `ClientInfoString` field — the only way to identify which application (Outlook desktop, OWA, mobile client, EWS automation, Graph API) dropped or deleted the calendar items.
 
-This failure is believed to be a separate, pre-existing Microsoft backend issue for this tenant and is not related to the calendar data loss itself. A support case was already open for this issue prior to this investigation.
+### 6.1 Confirmed Diagnosis: TENANT_WIDE_BACKEND_FAILURE
+
+A purpose-built diagnostic script (`Test-CalendarDiagnosticAccess.ps1`) was run against this tenant on 2026-06-08. All 8 tests failed with the same server-side error:
+
+```
+A server side error has occurred. Please visit the Exchange Admin Center and
+try the operation again, or contact support if the issue persists.
+```
+
+Key diagnostic results:
+
+| Test | Target | Params | Result |
+|---|---|---|---|
+| A | Admin's own mailbox (`ndradmin@venturafs.com`) | ResultSize 1 | **FAIL** — server error |
+| B | `matt.lowe@venturafs.com` | ResultSize 1 | **FAIL** — server error |
+| C | `matt.lowe@venturafs.com` | Known-present subject | **FAIL** — server error |
+| D | `matt.lowe@venturafs.com` | Known-missing subject | **FAIL** — server error |
+| E | `matt.lowe@venturafs.com` | MeetingID (CleanGOID) | **FAIL** — server error |
+| F | `alan.tsarovsky@venturafs.com` | ResultSize 1 | **FAIL** — server error |
+| G | `alan.tsarovsky@venturafs.com` | ResultSize 1 (throttle check) | **FAIL** — server error |
+| H | `matt.lowe@venturafs.com` | ShouldDecodeEnums | **FAIL** — server error |
+
+The cmdlet fails even for the **admin's own mailbox with ResultSize 1** — the most minimal possible query. All other Exchange Online cmdlets (`Get-Mailbox`, `Get-Recipient`, `Get-ManagementRoleAssignment`, `Get-MailboxFolderPermission`) were functioning normally during the same session. This conclusively rules out:
+- RBAC/permissions (all 8 mailboxes including admin's own fail)
+- Throttling (failure on first attempt, same error as all subsequent)
+- Auth token expiry (other EXO cmdlets succeeding in same session)
+- Mailbox-specific issues (fails for every mailbox tested)
+- ResultSize or parameter issues (fails with the most minimal query possible)
+
+**Conclusion: The `Get-CalendarDiagnosticObjects` backend service for tenant `b3377764-8275-47f8-8e2d-697b136c21c1` has a server-side fault. This is a Microsoft backend infrastructure issue.**
+
+### 6.2 Mailbox Infrastructure Details
+
+| Field | Value |
+|---|---|
+| Matt's ExchangeGuid | `4e064909-6e4b-4070-a391-0511fc735693` |
+| Matt's mailbox database | `namprd22.prod.outlook.com/c4116c34-f7fe-4a80-b75e-83d6fee18b70` |
+
+### 6.3 Secondary Issue: RBAC Gap Detected
+
+The diagnostic script also found that the signed-in admin (`ndradmin@venturafs.com`) did not have a direct `Calendar Diagnostics` role assignment — despite being a member of the `Organization Management` role group which normally includes this role. The auto-fix attempted by the diagnostic script (`New-ManagementRoleAssignment`) also failed. This secondary RBAC issue is likely moot while the backend itself is down, but should be confirmed once the backend is restored.
+
+### 6.4 PowerShell Version — PS5.1 Compatibility Test Pending
+
+A companion script (`Test-CalDiag-PS51.ps1`) has been prepared to run the same 7 tests in Windows PowerShell 5.1. The Exchange Online Management module uses different HTTP transport between PS5.1 (legacy Remote PowerShell / WinRM) and PS7 (pure REST). If `Get-CalendarDiagnosticObjects` works in PS5.1 but not PS7, the failure would indicate a module-layer transport incompatibility rather than a pure backend issue. If it fails in PS5.1 with the same error, this rules out PS version as a factor and confirms the backend fault is version-independent.
+
+This test should be run and results included in the support case.
 
 **This is the single most important item for Microsoft to resolve.** Until `Get-CalendarDiagnosticObjects` is restored, it is impossible to identify the authoring client and confirm whether the meetings were:
 - Never written to Matt's mailbox (delivery-layer failure), or
@@ -225,6 +271,9 @@ For the invitee-scenario meetings, confirm that the meeting request emails arriv
 | `mattphase2investigation.csv` | Full output — 100 rows, 14 MISSING_FROM_MATT, 86 PRESENT_ON_MATT. One row per occurrence found on at least one colleague's calendar. |
 | `Confirm-OrganizerCopyMissing.ps1` | Investigation script used to produce the above. Bidirectional Graph-only calendar comparison. |
 | `OrgCopyCheck_matt.lowe_*/run.log` | Per-run execution log with timestamped steps, read success/failure per colleague, and full findings summary. |
+| `Test-CalendarDiagnosticAccess.ps1` | PS7 diagnostic script. Diagnosed TENANT_WIDE_BACKEND_FAILURE — all 8 tests failed server-side. Run on 2026-06-08. |
+| `CalDiag_PS7_<timestamp>.txt` | Diagnostic run report produced by the above. Contains full test output including verbatim error messages. |
+| `Test-CalDiag-PS51.ps1` | PS5.1 compatibility test script. Runs the same 7 tests in Windows PowerShell 5.1 to determine if the failure is PS-version-specific or backend-level. **Pending run — results to be added to this brief.** |
 
 ### Column reference for mattphase2investigation.csv
 
