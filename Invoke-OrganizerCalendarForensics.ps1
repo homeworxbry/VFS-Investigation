@@ -395,7 +395,8 @@ function Get-OrganizerCalendarSeed {
             IsCancelled= (Get-Prop $e 'isCancelled')
         }
     }
-    Write-Log ("  -> {0} organizer events currently in calendar." -f (@($seed).Count)) 'INFO'
+    $seedCount = @($seed).Count
+    Write-Log "  -> $seedCount organizer events currently in calendar." 'INFO'
     return @($seed)
 }
 
@@ -495,7 +496,8 @@ function Invoke-DiagQuery {
 # ---- A) Per-subject backbone ----
 $seedSubjects = @($calSeed | Where-Object { $_.Subject } |
                   Select-Object -ExpandProperty Subject -Unique)
-Write-Log ("Querying diagnostics for {0} distinct organizer subjects..." -f $seedSubjects.Count) 'STEP'
+$seedSubjectCount = @($seedSubjects).Count
+Write-Log "Querying diagnostics for $seedSubjectCount distinct organizer subjects..." 'STEP'
 foreach ($subj in $seedSubjects) {
     try {
         $hit = Invoke-DiagQuery -Params @{
@@ -530,7 +532,8 @@ if (-not $sweepOk) {
     Write-Log "One or more sweep slices failed: detection of meetings entirely absent from his mailbox may be incomplete. Present/removed meetings are unaffected." 'WARN'
 }
 
-Write-Log ("Total distinct meetings (by CleanGlobalObjectId): {0}" -f $byGoid.Keys.Count) 'OK'
+$goidCount = $byGoid.Count
+Write-Log "Total distinct meetings (by CleanGlobalObjectId): $goidCount" 'OK'
 
 # ============================================================================
 # 6. CLASSIFY EACH MEETING
@@ -759,7 +762,8 @@ if (Get-Module -ListAvailable -Name ImportExcel) {
 Write-Log '================ RESULTS (all meetings in mailbox) ================' 'STEP'
 $results | Group-Object Classification | Sort-Object Name | ForEach-Object {
     $lvl = if ($_.Name -match 'MISSING|NO_DIAGNOSTIC|REMOVED') { 'ERROR' } elseif ($_.Name -eq 'PRESENT_OK') { 'OK' } else { 'WARN' }
-    Write-Log ("{0,-22} : {1}" -f $_.Name, $_.Count) $lvl
+    $gName = $_.Name; $gCount = $_.Count
+    Write-Log ("{0,-22} : {1}" -f $gName, $gCount) $lvl
 }
 Write-Log '---------------- Organizer meetings only (matt.lowe-organized) ----------------' 'STEP'
 $orgRows = $results | Where-Object { $_.OrganizerMeeting -eq $true }
@@ -768,7 +772,8 @@ if (@($orgRows).Count -eq 0) {
 } else {
     $orgRows | Group-Object Classification | Sort-Object Name | ForEach-Object {
         $lvl = if ($_.Name -match 'MISSING|NO_DIAGNOSTIC|REMOVED') { 'ERROR' } elseif ($_.Name -eq 'PRESENT_OK') { 'OK' } else { 'WARN' }
-        Write-Log ("{0,-22} : {1}" -f $_.Name, $_.Count) $lvl
+        $gName = $_.Name; $gCount = $_.Count
+        Write-Log ("{0,-22} : {1}" -f $gName, $gCount) $lvl
     }
 }
 Write-Log "Summary CSV : $SummaryCsv"  'INFO'

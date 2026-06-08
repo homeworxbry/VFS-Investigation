@@ -357,7 +357,9 @@ foreach ($e in $orgEvents) {
     $organizerSeries[$uid] = $true
     $organizerOccurrence[(Get-OccurrenceKey -ICalUId $uid -StartUtc (Get-EventStartUtc $e))] = $true
 }
-Write-Log ("  organizer calendar holds {0} events ({1} distinct series)." -f (@($orgEvents).Count), $organizerSeries.Keys.Count) 'INFO'
+$orgEventCount  = @($orgEvents).Count
+$orgSeriesCount = $organizerSeries.Count
+Write-Log "  organizer calendar holds $orgEventCount events ($orgSeriesCount distinct series)." 'INFO'
 
 # Tally attendees from meetings the organizer owns.
 $freq = @{}
@@ -376,7 +378,9 @@ foreach ($e in $orgEvents) {
     }
 }
 $attendees = @($freq.GetEnumerator() | Sort-Object { [int]$_.Value } -Descending | Select-Object -First $MaxAttendees -ExpandProperty Name)
-Write-Log ("  discovered {0} distinct attendees; scanning top {1}." -f $freq.Keys.Count, $attendees.Count) 'OK'
+$freqCount = $freq.Count
+$scanCount = $attendees.Count
+Write-Log "  discovered $freqCount distinct attendees; scanning top $scanCount." 'OK'
 if ($attendees.Count -eq 0) { Write-Log "No internal attendees discovered; nothing to compare. Exiting." 'WARN'; return }
 
 # ---- 2. Grant Reviewer on each attendee, then wait for propagation ---------
@@ -422,9 +426,13 @@ foreach ($a in $granted) {
         if ($a -notin $found[$key].SeenOnAttendees) { $found[$key].SeenOnAttendees.Add($a) }
     }
 }
-Write-Log ("  found {0} distinct {1}-organized occurrences across {2} readable attendee calendar(s)." -f $found.Keys.Count, $tag, @($readOk).Count) 'OK'
-if (@($readFailed).Count -gt 0) {
-    Write-Log ("  {0} attendee calendar(s) could NOT be fully read: {1}" -f @($readFailed).Count, ($readFailed -join ', ')) 'WARN'
+$foundCount  = $found.Count
+$readOkCount = @($readOk).Count
+Write-Log "  found $foundCount distinct $tag-organized occurrences across $readOkCount readable attendee calendar(s)." 'OK'
+$readFailedCount = @($readFailed).Count
+if ($readFailedCount -gt 0) {
+    $readFailedList = ($readFailed -join ', ')
+    Write-Log "  $readFailedCount attendee calendar(s) could NOT be fully read: $readFailedList" 'WARN'
 }
 
 # ---- 4. Compare each attendee-seen occurrence against the organizer ---------
@@ -455,25 +463,29 @@ $results | Export-Csv -Path $ResultCsv -NoTypeInformation -Encoding UTF8
 Write-Log '================ FINDINGS ================' 'STEP'
 $missing = @($results | Where-Object { $_.Verdict -eq 'MISSING_FROM_ORGANIZER' })
 $present = @($results | Where-Object { $_.Verdict -eq 'PRESENT_ON_ORGANIZER' })
-Write-Log ("PRESENT_ON_ORGANIZER   : {0}" -f $present.Count) 'OK'
-$missLvl = if ($missing.Count) { 'ERROR' } else { 'OK' }
-Write-Log ("MISSING_FROM_ORGANIZER : {0}" -f $missing.Count) $missLvl
+$presentCount = $present.Count
+$missingCount = $missing.Count
+Write-Log "PRESENT_ON_ORGANIZER   : $presentCount" 'OK'
+$missLvl = if ($missingCount -gt 0) { 'ERROR' } else { 'OK' }
+Write-Log "MISSING_FROM_ORGANIZER : $missingCount" $missLvl
 foreach ($m in $missing) {
     $seriesNote = if ($m.SeriesPresentOnOrg) { ' (series present on organizer, but THIS occurrence missing)' } else { '' }
-    Write-Log ("  MISSING: '{0}' [{1}] - on {2} attendee(s): {3}{4}" -f $m.Subject, $m.StartUtc, $m.AttendeeCount, $m.AttendeesWhoHaveIt, $seriesNote) 'ERROR'
+    $mSubj = $m.Subject; $mStart = $m.StartUtc; $mCount = $m.AttendeeCount; $mWho = $m.AttendeesWhoHaveIt
+    Write-Log "  MISSING: '$mSubj' [$mStart] - on $mCount attendee(s): $mWho$seriesNote" 'ERROR'
 }
 Write-Log "Findings CSV: $ResultCsv" 'INFO'
 
-if ($missing.Count) {
+if ($missingCount -gt 0) {
     Write-Log "MISSING_FROM_ORGANIZER rows are the proof: occurrence is on attendees' calendars but absent from the organizer's. Root-cause client still needs the diagnostic log once the backend is restored." 'STEP'
 } else {
     Write-Log "No missing organizer copies found among occurrences that were successfully compared." 'OK'
 }
 
 # Trustworthiness caveat: an "all clear" is only valid if every attendee was read.
-if (@($readFailed).Count -gt 0) {
-    Write-Log ("CAVEAT: {0} attendee calendar(s) could not be fully read ({1}). Their meetings were NOT compared, so a 'no missing' result is INCOMPLETE. Re-run later (sharing may still be propagating) or raise -ShareWaitSeconds." -f @($readFailed).Count, ($readFailed -join ', ')) 'WARN'
-} elseif ($missing.Count -eq 0) {
+if ($readFailedCount -gt 0) {
+    $readFailedList = ($readFailed -join ', ')
+    Write-Log "CAVEAT: $readFailedCount attendee calendar(s) could not be fully read ($readFailedList). Their meetings were NOT compared, so a 'no missing' result is INCOMPLETE. Re-run later (sharing may still be propagating) or raise -ShareWaitSeconds." 'WARN'
+} elseif ($missingCount -eq 0) {
     Write-Log "All scanned attendee calendars were read successfully, so this clean result is trustworthy for the scanned set. Widen -MaxAttendees or scan a specific attendee on a known-bad meeting for broader coverage." 'INFO'
 }
 
