@@ -594,8 +594,10 @@ $presentInv = @($results | Where-Object { $_.MattRole -eq 'Invitee'   -and $_.Ve
 $moC = Get-Count $missingOrg; $poC = Get-Count $presentOrg
 $miC = Get-Count $missingInv; $piC = Get-Count $presentInv
 
-Write-Log ("Organizer scenario  --  PRESENT_ON_MATT: {0}   MISSING_FROM_MATT: {1}" -f $poC, $moC) (if ($moC -gt 0) { 'ERROR' } else { 'OK' })
-Write-Log ("Invitee scenario    --  PRESENT_ON_MATT: {0}   MISSING_FROM_MATT: {1}" -f $piC, $miC) (if ($miC -gt 0) { 'ERROR' } else { 'OK' })
+$orgLevel = if ($moC -gt 0) { 'ERROR' } else { 'OK' }
+$invLevel = if ($miC -gt 0) { 'ERROR' } else { 'OK' }
+Write-Log ("Organizer scenario  --  PRESENT_ON_MATT: {0}   MISSING_FROM_MATT: {1}" -f $poC, $moC) $orgLevel
+Write-Log ("Invitee scenario    --  PRESENT_ON_MATT: {0}   MISSING_FROM_MATT: {1}" -f $piC, $miC) $invLevel
 
 if ($moC -gt 0) {
     Write-Log "--- Matt ORGANISED these meetings; they are missing from his own calendar ---" 'ERROR'
@@ -616,10 +618,8 @@ Write-Log "Output: $Phase2Csv" 'INFO'
 Write-Log "Run log: $LogFile" 'INFO'
 
 if ($readFailedCt -gt 0) {
-    Write-Log ("CAVEAT: {0} colleague calendar(s) could not be fully read ({1}). " +
-               "Their meetings were NOT compared -- this result is INCOMPLETE. " +
-               "Re-run (sharing may still be propagating) or raise -ShareWaitSeconds.") `
-              -f $readFailedCt, ($readFailed -join ', ') 'WARN'
+    $caveatMsg = "CAVEAT: {0} colleague calendar(s) could not be fully read ({1}). Their meetings were NOT compared -- this result is INCOMPLETE. Re-run (sharing may still be propagating) or raise -ShareWaitSeconds." -f $readFailedCt, ($readFailed -join ', ')
+    Write-Log $caveatMsg 'WARN'
 } elseif (($moC + $miC) -eq 0) {
     Write-Log ("All $readOkCt colleague calendar(s) were read successfully. " +
                "Clean result is trustworthy for the scanned set. " +
