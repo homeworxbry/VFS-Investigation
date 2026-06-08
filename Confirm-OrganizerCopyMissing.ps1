@@ -107,6 +107,23 @@ trap {
     break
 }
 
+# Count a collection WITHOUT touching the PowerShell-extended .Count member on
+# arrays/@() results. On this tenant's host that member throws "Argument types do
+# not match" (a loaded module clobbered the System.Array type data), so we count by
+# iterating instead. Dictionaries expose a native .Count that is unaffected.
+function Get-Count {
+    param($Collection)
+    if ($null -eq $Collection) { return 0 }
+    if ($Collection -is [System.Collections.IDictionary]) { return $Collection.Count }
+    if ($Collection -is [string]) { return 1 }
+    if ($Collection -is [System.Collections.IEnumerable]) {
+        $n = 0
+        foreach ($x in $Collection) { $n++ }
+        return $n
+    }
+    return 1
+}
+
 Write-Log "Organizer-copy check started. Organizer=$TargetOrganizer Lookback=$LookbackDays Domain=$AttendeeDomain" 'STEP'
 
 # ---- Modules ---------------------------------------------------------------
@@ -357,8 +374,11 @@ foreach ($e in $orgEvents) {
     $organizerSeries[$uid] = $true
     $organizerOccurrence[(Get-OccurrenceKey -ICalUId $uid -StartUtc (Get-EventStartUtc $e))] = $true
 }
-$orgEventCount  = @($orgEvents).Count
-$orgSeriesCount = $organizerSeries.Count
+$orgEventsTypeName = '<null>'
+if ($null -ne $orgEvents) { try { $orgEventsTypeName = $orgEvents.GetType().FullName } catch { $orgEventsTypeName = '<GetType threw>' } }
+Write-Log "DEBUG: orgEvents .NET type = $orgEventsTypeName" 'INFO'
+$orgEventCount  = Get-Count $orgEvents
+$orgSeriesCount = Get-Count $organizerSeries
 Write-Log "  organizer calendar holds $orgEventCount events ($orgSeriesCount distinct series)." 'INFO'
 
 # Tally attendees from meetings the organizer owns.
@@ -378,10 +398,10 @@ foreach ($e in $orgEvents) {
     }
 }
 $attendees = @($freq.GetEnumerator() | Sort-Object { [int]$_.Value } -Descending | Select-Object -First $MaxAttendees -ExpandProperty Name)
-$freqCount = $freq.Count
-$scanCount = $attendees.Count
+$freqCount = Get-Count $freq
+$scanCount = Get-Count $attendees
 Write-Log "  discovered $freqCount distinct attendees; scanning top $scanCount." 'OK'
-if ($attendees.Count -eq 0) { Write-Log "No internal attendees discovered; nothing to compare. Exiting." 'WARN'; return }
+if ($scanCount -eq 0) { Write-Log "No internal attendees discovered; nothing to compare. Exiting." 'WARN'; return }
 
 # ---- 2. Grant Reviewer on each attendee, then wait for propagation ---------
 Write-Log "Granting least-privilege Reviewer on attendee calendars..." 'STEP'
@@ -389,7 +409,7 @@ $granted = @()
 foreach ($a in $attendees) {
     if (Grant-CalendarShareFor -Mailbox $a -AdminUpn $AdminUpn) { $granted += $a; Write-Log "  shared: $a" 'INFO' }
 }
-if (@($granted).Count -eq 0) { Write-Log "No attendee calendars could be shared. Exiting." 'WARN'; return }
+if ((Get-Count $granted) -eq 0) { Write-Log "No attendee calendars could be shared. Exiting." 'WARN'; return }
 Write-Log ("Waiting {0}s for sharing to propagate to Graph..." -f $ShareWaitSeconds) 'STEP'
 Start-Sleep -Seconds $ShareWaitSeconds
 
@@ -426,10 +446,10 @@ foreach ($a in $granted) {
         if ($a -notin $found[$key].SeenOnAttendees) { $found[$key].SeenOnAttendees.Add($a) }
     }
 }
-$foundCount  = $found.Count
-$readOkCount = @($readOk).Count
+$foundCount  = Get-Count $found
+$readOkCount = Get-Count $readOk
 Write-Log "  found $foundCount distinct $tag-organized occurrences across $readOkCount readable attendee calendar(s)." 'OK'
-$readFailedCount = @($readFailed).Count
+$readFailedCount = Get-Count $readFailed
 if ($readFailedCount -gt 0) {
     $readFailedList = ($readFailed -join ', ')
     Write-Log "  $readFailedCount attendee calendar(s) could NOT be fully read: $readFailedList" 'WARN'
@@ -451,7 +471,7 @@ foreach ($key in $found.Keys) {
         PresentOnOrganizer   = $presentOcc
         SeriesPresentOnOrg   = $presentSeries     # series exists but THIS occurrence missing = strong signal
         AttendeesWhoHaveIt   = (@($rec.SeenOnAttendees) -join '; ')
-        AttendeeCount        = @($rec.SeenOnAttendees).Count
+        AttendeeCount        = (Get-Count $rec.SeenOnAttendees)
         iCalUId              = $rec.iCalUId
     })
 }
@@ -463,8 +483,8 @@ $results | Export-Csv -Path $ResultCsv -NoTypeInformation -Encoding UTF8
 Write-Log '================ FINDINGS ================' 'STEP'
 $missing = @($results | Where-Object { $_.Verdict -eq 'MISSING_FROM_ORGANIZER' })
 $present = @($results | Where-Object { $_.Verdict -eq 'PRESENT_ON_ORGANIZER' })
-$presentCount = $present.Count
-$missingCount = $missing.Count
+$presentCount = Get-Count $present
+$missingCount = Get-Count $missing
 Write-Log "PRESENT_ON_ORGANIZER   : $presentCount" 'OK'
 $missLvl = if ($missingCount -gt 0) { 'ERROR' } else { 'OK' }
 Write-Log "MISSING_FROM_ORGANIZER : $missingCount" $missLvl

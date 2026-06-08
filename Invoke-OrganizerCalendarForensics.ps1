@@ -109,6 +109,23 @@ trap {
     break
 }
 
+# Count a collection by iterating, not via the PowerShell-extended .Count member,
+# which on this tenant's host throws "Argument types do not match" for certain
+# objects returned by Invoke-MgGraphRequest. Dictionaries expose a native .Count
+# that is unaffected. Robust for null/scalar/array/list inputs.
+function Get-Count {
+    param($Collection)
+    if ($null -eq $Collection) { return 0 }
+    if ($Collection -is [System.Collections.IDictionary]) { return $Collection.Count }
+    if ($Collection -is [string]) { return 1 }
+    if ($Collection -is [System.Collections.IEnumerable]) {
+        $n = 0
+        foreach ($x in $Collection) { $n++ }
+        return $n
+    }
+    return 1
+}
+
 Write-Log "Forensic run started. Target=$TargetMailbox  Lookback=$LookbackDays days  Output=$OutDir" 'STEP'
 
 # ============================================================================
@@ -395,7 +412,7 @@ function Get-OrganizerCalendarSeed {
             IsCancelled= (Get-Prop $e 'isCancelled')
         }
     }
-    $seedCount = @($seed).Count
+    $seedCount = Get-Count $seed
     Write-Log "  -> $seedCount organizer events currently in calendar." 'INFO'
     return @($seed)
 }
@@ -496,7 +513,7 @@ function Invoke-DiagQuery {
 # ---- A) Per-subject backbone ----
 $seedSubjects = @($calSeed | Where-Object { $_.Subject } |
                   Select-Object -ExpandProperty Subject -Unique)
-$seedSubjectCount = @($seedSubjects).Count
+$seedSubjectCount = Get-Count $seedSubjects
 Write-Log "Querying diagnostics for $seedSubjectCount distinct organizer subjects..." 'STEP'
 foreach ($subj in $seedSubjects) {
     try {
@@ -597,6 +614,7 @@ foreach ($goid in $byGoid.Keys) {
     $apptCreate  = $apptObjs | Where-Object { Test-IsCreateAction ([string]$_.CalendarLogTriggerAction) }
     $apptRemoval = $apptObjs | Where-Object { Test-IsRemovalAction ([string]$_.CalendarLogTriggerAction) }
     $reqObjs     = $objs | Where-Object { ([string]$_.ItemClass) -like 'IPM.Schedule.Meeting*' }
+    $reqCount    = Get-Count $reqObjs
 
     # EXO-authoritative current presence: appointment was created AND its most recent
     # appointment action is not a removal. Does not depend on Graph access.
@@ -637,12 +655,12 @@ foreach ($goid in $byGoid.Keys) {
             $classification = 'AMBIGUOUS'
         }
     }
-    elseif (-not $apptCreate -and ($reqObjs.Count -gt 0)) {
+    elseif (-not $apptCreate -and ($reqCount -gt 0)) {
         # Meeting-request activity exists for the organizer mailbox but no appointment
         # was ever created in his Calendar -> the reported failure signature.
         $classification = 'MISSING_NEVER_CREATED'
     }
-    elseif (-not $apptCreate -and $reqObjs.Count -eq 0 -and $graphPresent) {
+    elseif (-not $apptCreate -and $reqCount -eq 0 -and $graphPresent) {
         $classification = 'IN_CALENDAR_NO_DIAG'  # present per Graph, lifecycle outside window
     }
 
@@ -665,7 +683,7 @@ foreach ($goid in $byGoid.Keys) {
         ExoPresent           = $exoPresent
         GraphPresent         = $graphPresent
         AuthoringClient      = $authoringClient
-        EventCount           = $objs.Count
+        EventCount           = (Get-Count $objs)
         CleanGlobalObjectId  = $goid
     })
 
@@ -767,7 +785,7 @@ $results | Group-Object Classification | Sort-Object Name | ForEach-Object {
 }
 Write-Log '---------------- Organizer meetings only (matt.lowe-organized) ----------------' 'STEP'
 $orgRows = $results | Where-Object { $_.OrganizerMeeting -eq $true }
-if (@($orgRows).Count -eq 0) {
+if ((Get-Count $orgRows) -eq 0) {
     Write-Log "No meetings were positively identified as organizer-owned. If the Graph overlay 403'd and the organizer copies never wrote, expand scope to an attendee mailbox." 'WARN'
 } else {
     $orgRows | Group-Object Classification | Sort-Object Name | ForEach-Object {
