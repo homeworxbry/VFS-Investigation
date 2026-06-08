@@ -85,8 +85,9 @@ $ReportCsv  = Join-Path $OutputRoot "CalDiagAccess_$stamp.csv"
 $testResults = New-Object System.Collections.Generic.List[object]
 
 function Write-Log {
-    param([Parameter(Mandatory)][string]$Message,
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Message,
           [ValidateSet('INFO','WARN','PASS','FAIL','FIX','STEP','ERROR')][string]$Level = 'INFO')
+    if ($Message -eq '') { Write-Host ''; Add-Content -Path $ReportTxt -Value ''; return }
     $ts   = Get-Date -Format 'HH:mm:ss'
     $line = "$ts [$Level] $Message"
     switch ($Level) {
