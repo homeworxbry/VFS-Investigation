@@ -174,11 +174,23 @@ The cmdlet fails even for the **admin's own mailbox with ResultSize 1** — the 
 
 The diagnostic script also found that the signed-in admin (`ndradmin@venturafs.com`) did not have a direct `Calendar Diagnostics` role assignment — despite being a member of the `Organization Management` role group which normally includes this role. The auto-fix attempted by the diagnostic script (`New-ManagementRoleAssignment`) also failed. This secondary RBAC issue is likely moot while the backend itself is down, but should be confirmed once the backend is restored.
 
-### 6.4 PowerShell Version — PS5.1 Compatibility Test Pending
+### 6.4 PowerShell Version — PS5.1 Compatibility Test: CONFIRMED BACKEND FAULT
 
-A companion script (`Test-CalDiag-PS51.ps1`) has been prepared to run the same 7 tests in Windows PowerShell 5.1. The Exchange Online Management module uses different HTTP transport between PS5.1 (legacy Remote PowerShell / WinRM) and PS7 (pure REST). If `Get-CalendarDiagnosticObjects` works in PS5.1 but not PS7, the failure would indicate a module-layer transport incompatibility rather than a pure backend issue. If it fails in PS5.1 with the same error, this rules out PS version as a factor and confirms the backend fault is version-independent.
+The same 7 tests were run in Windows PowerShell 5.1 (`Test-CalDiag-PS51.ps1`) on 2026-06-08 at 15:05 UTC. Result: **0/7 PASS — all 7 tests failed with the same server-side error.**
 
-This test should be run and results included in the support case.
+| Field | Value |
+|---|---|
+| PS version | 5.1.26100.8457 |
+| Module | ExchangeOnlineManagement 3.9.2 |
+| Result | 0 PASS / 7 FAIL |
+
+Error message received in PS5.1:
+```
+A server side error has occurred because of which the operation could not be completed.
+Please try again after some time. If the problem still persists, please reach out to MS support.
+```
+
+The Exchange Online Management module uses different HTTP transport layers between versions — PS5.1 uses the legacy Remote PowerShell / WinRM path; PS7 uses a pure REST layer. Both fail with the same underlying error. **PowerShell version is definitively ruled out as a contributing factor.** The backend fault is version-independent and affects this tenant at the server level regardless of which client or transport is used.
 
 **This is the single most important item for Microsoft to resolve.** Until `Get-CalendarDiagnosticObjects` is restored, it is impossible to identify the authoring client and confirm whether the meetings were:
 - Never written to Matt's mailbox (delivery-layer failure), or
@@ -273,7 +285,8 @@ For the invitee-scenario meetings, confirm that the meeting request emails arriv
 | `OrgCopyCheck_matt.lowe_*/run.log` | Per-run execution log with timestamped steps, read success/failure per colleague, and full findings summary. |
 | `Test-CalendarDiagnosticAccess.ps1` | PS7 diagnostic script. Diagnosed TENANT_WIDE_BACKEND_FAILURE — all 8 tests failed server-side. Run on 2026-06-08. |
 | `CalDiag_PS7_<timestamp>.txt` | Diagnostic run report produced by the above. Contains full test output including verbatim error messages. |
-| `Test-CalDiag-PS51.ps1` | PS5.1 compatibility test script. Runs the same 7 tests in Windows PowerShell 5.1 to determine if the failure is PS-version-specific or backend-level. **Pending run — results to be added to this brief.** |
+| `Test-CalDiag-PS51.ps1` | PS5.1 compatibility test script. Runs the same 7 tests in Windows PowerShell 5.1. |
+| `CalDiag_PS51_20260608_150505.txt` | PS5.1 run report: 0/7 PASS. Same server-side error across all tests. PS version ruled out as contributing factor. |
 
 ### Column reference for mattphase2investigation.csv
 
